@@ -1,0 +1,56 @@
+services:
+  kronos-service:
+      build: ./
+      container_name: kronos_service
+      ports:
+        - "8000:8000"
+      environment:
+        DATABASE_URL: postgresql://user:password@kronos-db:5432/kronosdb
+        REDIS_URL: redis://kronos-redis:6379/0
+      depends_on:
+        kronos-db:
+          condition: service_healthy
+        kronos-redis:
+          condition: service_healthy
+      networks:
+        - kronos-network
+      restart: unless-stopped
+
+  kronos-db:
+      image: postgres:16-alpine
+      container_name: kronos_db
+      environment:
+        POSTGRES_USER: user
+        POSTGRES_PASSWORD: password
+        POSTGRES_DB: kronosdb
+      volumes:
+        - kronos_postgres_data:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U user -d kronosdb"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
+      networks:
+        - kronos-network
+
+  kronos-redis:
+      image: redis:7-alpine
+      container_name: kronos_redis
+      command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      volumes:
+        - kronos_redis_data:/data
+      healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 5s
+        timeout: 3s
+        retries: 5
+      networks:
+        - kronos-network
+
+volumes:
+  kronos_postgres_data:
+  kronos_redis_data:
+
+networks:
+  kronos-network:
+    driver: bridge

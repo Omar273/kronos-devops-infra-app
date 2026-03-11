@@ -1,0 +1,179 @@
+# ============================================================
+# NAMESPACE
+# ============================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kronos
+
+
+
+# SECRET
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kronos-secrets
+  namespace: kronos
+type: Opaque
+stringData:
+  POSTGRES_USER: user
+  POSTGRES_PASSWORD: password
+  POSTGRES_DB: kronosdb
+  DATABASE_URL: postgresql://user:password@localhost:5432/kronosdb
+  REDIS_URL: redis://localhost:6379/0
+
+
+
+# PERSISTENT VOLUME CLAIM (Postgres data)
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: kronos
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+
+
+# POD — all 3 containers together
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kronos
+  namespace: kronos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kronos
+  template:
+    metadata:
+      labels:
+        app: kronos
+    spec:
+
+      
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h localhost -U $(POSTGRES_USER) -d $(POSTGRES_DB);
+              do echo "Waiting for postgres..."; sleep 2; done
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: POSTGRES_DB
+
+      containers:
+
+        # 1. Postgres 
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: POSTGRES_DB
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: postgres-storage
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "user", "-d", "kronosdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+        #  2. Redis 
+        - name: redis
+          image: redis:7-alpine
+          command:
+            - redis-server
+            - "--appendonly"
+            - "yes"
+            - "--maxmemory"
+            - "256mb"
+            - "--maxmemory-policy"
+            - "allkeys-lru"
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+        #3. Kronos App 
+        - name: kronos-service
+          image: kronos-devops-kronos-service:latest 
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kronos-secrets
+                  key: REDIS_URL
+          readinessProbe:
+            httpGet:
+              path: /health   
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+
+---
+
+# SERVICE
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kronos-service
+  namespace: kronos
+spec:
+  selector:
+    app: kronos
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30000

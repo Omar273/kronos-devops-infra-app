@@ -1,0 +1,87 @@
+---
+- name: Setup Kronos App Server
+  hosts: kronos
+  become: true
+
+  vars:
+    db_password: "your-strong-password"       # or use ansible-vault
+    rds_endpoint: "paste-rds-endpoint-here"   #  from terraform output
+    elasticache_endpoint: "paste-cache-endpoint-here" # from terraform output
+    docker_image: "your-dockerhub-username/kronos-service:latest" #  change
+
+  tasks:
+
+    # ── Install Docker ──────────────────────────────────────
+    - name: Install dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: yes
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    # ── Configure environment variables ────────────────────
+    - name: Create app directory
+      file:
+        path: /opt/kronos
+        state: directory
+        mode: '0755'
+
+    - name: Write .env file from template
+      template:
+        src: templates/env.j2
+        dest: /opt/kronos/.env
+        mode: '0600'  # secrets — readable by root only
+
+    # ── Pull & Run the app ──────────────────────────────────
+    - name: Pull Kronos Docker image
+      docker_image:
+        name: "{{ docker_image }}"
+        source: pull
+
+    - name: Stop existing container if running
+      docker_container:
+        name: kronos-service
+        state: absent
+      ignore_errors: true
+
+    - name: Run Kronos container
+      docker_container:
+        name: kronos-service
+        image: "{{ docker_image }}"
+        state: started
+        restart_policy: always   # auto-restarts if it crashes
+        ports:
+          - "8000:8000"
+        env_file: /opt/kronos/.env

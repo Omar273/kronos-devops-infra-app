@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kronos-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io  # cleans up k8s resources when app is deleted from ArgoCD
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Omar273/kronos-devops-infra-app.git # change this
+    targetRevision: main
+    path: k8s/kronos   # 👈 folder where your single k8s file lives
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kronos
+
+  syncPolicy:
+    automated:
+      prune: true       # deletes k8s resources that were removed from Git
+      selfHeal: true    # reverts any manual kubectl changes to match Git
+    syncOptions:
+      - CreateNamespace=true   # auto-creates the kronos namespace if missing
+      - ApplyOutOfSyncOnly=true  # only applies changed resources, not everything
