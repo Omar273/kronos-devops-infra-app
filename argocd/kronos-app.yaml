@@ -11,7 +11,7 @@ spec:
   source:
     repoURL: https://github.com/Omar273/kronos-devops-infra-app.git # change this
     targetRevision: main
-    path: k8s/kronos   # 👈 folder where your single k8s file lives
+    path: k8s/kronos   #  folder where your single k8s file lives
 
   destination:
     server: https://kubernetes.default.svc
